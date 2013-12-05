@@ -15,33 +15,38 @@
 # limitations under the License.
 
 from falcon import testing as ftest
-from oslo.config import cfg
 
 from marconi.queues import bootstrap
 from marconi.queues.transport.wsgi import driver
 from marconi import tests as testing
-from marconi.tests import faulty_storage
 
 
 class TestBase(testing.TestBase):
 
-    config_filename = None
+    config_file = None
 
     def setUp(self):
-        if self.config_filename is None:
-            self.skipTest('No config specified')
-
         super(TestBase, self).setUp()
 
-        conf = self.load_conf(self.conf_path(self.config_filename))
-        conf.register_opts(driver._WSGI_OPTIONS,
-                           group=driver._WSGI_GROUP)
-        self.wsgi_cfg = conf[driver._WSGI_GROUP]
+        if not self.config_file:
+            self.skipTest("No config specified")
 
-        self.boot = bootstrap.Bootstrap(conf)
+        self.conf.register_opts(driver._WSGI_OPTIONS,
+                                group=driver._WSGI_GROUP)
+        self.wsgi_cfg = self.conf[driver._WSGI_GROUP]
+
+        self.conf.admin_mode = True
+        self.boot = bootstrap.Bootstrap(self.conf)
 
         self.app = self.boot.transport.app
+
         self.srmock = ftest.StartResponseMock()
+
+    def tearDown(self):
+        if self.conf.sharding:
+            self.boot.control.shards_controller.drop_all()
+            self.boot.control.catalogue_controller.drop_all()
+        super(TestBase, self).tearDown()
 
     def simulate_request(self, path, project_id=None, **kwargs):
         """Simulate a request.
@@ -97,13 +102,3 @@ class TestBase(testing.TestBase):
 
 class TestBaseFaulty(TestBase):
     """This test ensures we aren't letting any exceptions go unhandled."""
-
-    def setUp(self):
-        self._storage_backup = bootstrap.Bootstrap.storage
-        faulty = faulty_storage.DataDriver(cfg.ConfigOpts())
-        setattr(bootstrap.Bootstrap, 'storage', faulty)
-        super(TestBaseFaulty, self).setUp()
-
-    def tearDown(self):
-        setattr(bootstrap.Bootstrap, 'storage', self._storage_backup)
-        super(TestBaseFaulty, self).tearDown()

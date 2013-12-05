@@ -17,12 +17,15 @@ from marconi.queues import storage
 
 
 class DataDriver(storage.DataDriverBase):
-    def __init__(self, conf):
-        super(DataDriver, self).__init__(conf)
+    def __init__(self, conf, cache):
+        super(DataDriver, self).__init__(conf, cache)
 
     @property
     def default_options(self):
         return {}
+
+    def is_alive(self):
+        raise NotImplementedError()
 
     @property
     def queue_controller(self):
@@ -39,8 +42,12 @@ class DataDriver(storage.DataDriverBase):
 
 class ControlDriver(storage.ControlDriverBase):
 
-    def __init__(self, conf):
-        super(ControlDriver, self).__init__(conf)
+    def __init__(self, conf, cache):
+        super(ControlDriver, self).__init__(conf, cache)
+
+    @property
+    def catalogue_controller(self):
+        return None
 
     @property
     def shards_controller(self):
@@ -87,7 +94,7 @@ class MessageController(storage.MessageBase):
         raise NotImplementedError()
 
     def list(self, queue, project=None, marker=None,
-             limit=10, echo=False, client_uuid=None):
+             limit=None, echo=False, client_uuid=None):
         raise NotImplementedError()
 
     def post(self, queue, messages, project=None):

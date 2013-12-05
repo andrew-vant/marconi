@@ -13,25 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import abc
 
-import six
+class InvalidDriver(Exception):
+    """A driver was not found or loaded."""
 
 
-@six.add_metaclass(abc.ABCMeta)
-class DriverBase(object):
-    """Base class for Proxy Transport Drivers to document the expected
-    interface.
+class PatternNotFound(Exception):
+    """A string did not match the expected pattern or regex."""
 
-    :param storage: The storage driver
-    :param cache: The cache driver
-    """
 
-    def __init__(self, storage, cache):
-        self.storage = storage
-        self.cache = cache
-
-    @abc.abstractmethod
-    def listen():
-        """Start listening for client requests (self-hosting mode)."""
-        raise NotImplementedError
+class InvalidOperation(Exception):
+    """Raised when attempted a non existent operation."""

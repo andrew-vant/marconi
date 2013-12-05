@@ -33,6 +33,14 @@ class MessagesBaseTest(base.TestBase):
     def setUp(self):
         super(MessagesBaseTest, self).setUp()
 
+        if self.conf.sharding:
+            for i in range(4):
+                uri = self.conf['drivers:storage:mongodb'].uri
+                doc = {'weight': 100, 'uri': uri}
+                self.simulate_put('/v1/shards/' + str(i),
+                                  body=json.dumps(doc))
+                self.assertEqual(self.srmock.status, falcon.HTTP_201)
+
         self.project_id = '7e55e1a7e'
         self.queue_path = '/v1/queues/fizbit'
         self.messages_path = self.queue_path + '/messages'
@@ -46,6 +54,10 @@ class MessagesBaseTest(base.TestBase):
 
     def tearDown(self):
         self.simulate_delete(self.queue_path, self.project_id)
+        if self.conf.sharding:
+            for i in range(4):
+                self.simulate_delete('/v1/shards/' + str(i))
+
         super(MessagesBaseTest, self).tearDown()
 
     def _test_post(self, sample_messages):
@@ -183,6 +195,12 @@ class MessagesBaseTest(base.TestBase):
     def test_post_to_missing_queue(self):
         self._post_messages('/v1/queues/nonexistent/messages')
         self.assertEqual(self.srmock.status, falcon.HTTP_404)
+
+    def test_get_from_missing_queue(self):
+        self.simulate_get('/v1/queues/nonexistent/messages', self.project_id,
+                          headers={'Client-ID':
+                                   'dfcd3238-425c-11e3-8a80-28cfe91478b9'})
+        self.assertEqual(self.srmock.status, falcon.HTTP_204)
 
     @ddt.data('', '0xdeadbeef', '550893e0-2b6e-11e3-835a-5cf9dd72369')
     def test_bad_client_id(self, text_id):
@@ -402,6 +420,23 @@ class MessagesBaseTest(base.TestBase):
         self.simulate_get(location, self.project_id)
         self.assertEqual(self.srmock.status, falcon.HTTP_200)
 
+    def test_no_duplicated_messages_path_in_href(self):
+        """Fixes bug 1240897
+        """
+        path = self.queue_path + '/messages'
+        self._post_messages(path, repeat=1)
+
+        msg_id = self._get_msg_id(self.srmock.headers_dict)
+
+        query_string = 'ids=%s' % msg_id
+        body = self.simulate_get(path, self.project_id,
+                                 query_string=query_string,
+                                 headers=self.headers)
+        messages = json.loads(body[0])
+
+        self.assertNotIn(self.queue_path + '/messages/messages',
+                         messages[0]['href'])
+
     def _post_messages(self, target, repeat=1):
         doc = json.dumps([{'body': 239, 'ttl': 300}] * repeat)
         return self.simulate_post(target, self.project_id, body=doc,
@@ -416,35 +451,45 @@ class MessagesBaseTest(base.TestBase):
 
 class MessagesSQLiteTests(MessagesBaseTest):
 
-    config_filename = 'wsgi_sqlite.conf'
+    config_file = 'wsgi_sqlite.conf'
 
 
-class MessagesSQLiteShardedTests(MessagesBaseTest):
-
-    config_filename = 'wsgi_sqlite_sharded.conf'
+# TODO(cpp-cabrera): restore sqlite sharded test suite once shards and
+# catalogue get an sqlite implementation.
 
 
 @testing.requires_mongodb
 class MessagesMongoDBTests(MessagesBaseTest):
 
-    config_filename = 'wsgi_mongodb.conf'
+    config_file = 'wsgi_mongodb.conf'
 
     def setUp(self):
         super(MessagesMongoDBTests, self).setUp()
+
+    def tearDown(self):
+        super(MessagesMongoDBTests, self).tearDown()
 
 
 @testing.requires_mongodb
 class MessagesMongoDBShardedTests(MessagesBaseTest):
 
-    config_filename = 'wsgi_mongodb_sharded.conf'
+    config_file = 'wsgi_mongodb_sharded.conf'
 
     def setUp(self):
         super(MessagesMongoDBShardedTests, self).setUp()
 
+    def tearDown(self):
+        super(MessagesMongoDBShardedTests, self).tearDown()
+
+    # TODO(cpp-cabrera): remove this skipTest once sharded queue
+    # listing is implemented
+    def test_list(self):
+        self.skipTest("Need to implement sharded queue listing.")
+
 
 class MessagesFaultyDriverTests(base.TestBaseFaulty):
 
-    config_filename = 'wsgi_faulty.conf'
+    config_file = 'wsgi_faulty.conf'
 
     def test_simple(self):
         project_id = 'xyz'

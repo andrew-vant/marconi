@@ -1,4 +1,4 @@
-# Copyright (c) 2013 Rackspace, Inc.
+# Copyright (c) 2013 Rackspace Hosting, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -10,31 +10,38 @@
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
 # implied.
-#
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+"""sqlite storage controller for the queues catalogue.
+
+Serves to construct an association between a project + queue -> shard
+"""
 
 from marconi.queues.storage import base
 
 
-class ShardsController(base.ShardsBase):
+class CatalogueController(base.CatalogueBase):
 
-    def list(self, marker=None, limit=10, detailed=False):
+    def __init__(self, *args, **kwargs):
+        super(CatalogueController, self).__init__(*args, **kwargs)
+
+    def list(self, project):
         pass
 
-    def get(self, name, detailed=False):
+    def get(self, project, queue):
         pass
 
-    def create(self, name, weight, uri, options=None):
+    def exists(self, project, queue):
         pass
 
-    def exists(self, name):
+    def insert(self, project, queue, shard):
         pass
 
-    def update(self, name, **kwargs):
+    def delete(self, project, queue):
         pass
 
-    def delete(self, name):
+    def update(self, project, queue, shards=None):
         pass
 
     def drop_all(self):

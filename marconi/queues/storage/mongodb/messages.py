@@ -30,7 +30,7 @@ import pymongo.read_preferences
 import marconi.openstack.common.log as logging
 from marconi.openstack.common import timeutils
 from marconi.queues import storage
-from marconi.queues.storage import exceptions
+from marconi.queues.storage import errors
 from marconi.queues.storage.mongodb import utils
 
 
@@ -55,23 +55,27 @@ TTL_INDEX_FIELDS = [
     ('e', 1),
 ]
 
+# NOTE(cpp-cabrera): to unify use of project/queue across mongodb
+# storage impls.
+PROJ_QUEUE = utils.PROJ_QUEUE_KEY
+
 # NOTE(kgriffs): This index is for listing messages, usually
 # filtering out claimed ones.
 ACTIVE_INDEX_FIELDS = [
-    ('p_q', 1),  # Project will to be unique, so put first
+    (PROJ_QUEUE, 1),  # Project will be unique, so put first
     ('k', 1),  # Used for sorting and paging, must come before range queries
     ('c.e', 1),  # Used for filtering out claimed messages
 ]
 
 # For counting
 COUNTING_INDEX_FIELDS = [
-    ('p_q', 1),  # Project will to be unique, so put first
+    (PROJ_QUEUE, 1),  # Project will be unique, so put first
     ('c.e', 1),  # Used for filtering out claimed messages
 ]
 
 # Index used for claims
 CLAIMED_INDEX_FIELDS = [
-    ('p_q', 1),
+    (PROJ_QUEUE, 1),
     ('c.id', 1),
     ('k', 1),
     ('c.e', 1),
@@ -79,7 +83,7 @@ CLAIMED_INDEX_FIELDS = [
 
 # Index used to ensure uniqueness.
 MARKER_INDEX_FIELDS = [
-    ('p_q', 1),
+    (PROJ_QUEUE, 1),
     ('k', 1),
 ]
 
@@ -193,7 +197,7 @@ class MessageController(storage.MessageBase):
         """
         scope = utils.scope_queue_name(queue_name, project)
         collection = self._collection(queue_name, project)
-        collection.remove({'p_q': scope}, w=0)
+        collection.remove({PROJ_QUEUE: scope}, w=0)
 
     def _list(self, queue_name, project=None, marker=None,
               echo=False, client_uuid=None, fields=None,
@@ -234,7 +238,7 @@ class MessageController(storage.MessageBase):
         query = {
             # Messages must belong to this
             # queue and project
-            'p_q': utils.scope_queue_name(queue_name, project),
+            PROJ_QUEUE: utils.scope_queue_name(queue_name, project),
         }
 
         if not echo:
@@ -275,7 +279,7 @@ class MessageController(storage.MessageBase):
         """
         query = {
             # Messages must belong to this queue
-            'p_q': utils.scope_queue_name(queue_name, project),
+            PROJ_QUEUE: utils.scope_queue_name(queue_name, project),
         }
 
         if not include_claimed:
@@ -301,7 +305,7 @@ class MessageController(storage.MessageBase):
             claim_id = {'$ne': None}
 
         query = {
-            'p_q': utils.scope_queue_name(queue_name, project),
+            PROJ_QUEUE: utils.scope_queue_name(queue_name, project),
             'c.id': claim_id,
             'c.e': {'$gt': expires or timeutils.utcnow_ts()},
         }
@@ -312,7 +316,9 @@ class MessageController(storage.MessageBase):
         preference = pymongo.read_preferences.ReadPreference.PRIMARY
         collection = self._collection(queue_name, project)
         msgs = collection.find(query, sort=[('k', 1)],
-                               read_preference=preference)
+                               read_preference=preference).hint(
+                                   CLAIMED_INDEX_FIELDS
+                               )
 
         if limit is not None:
             msgs = msgs.limit(limit)
@@ -341,7 +347,7 @@ class MessageController(storage.MessageBase):
         scope = utils.scope_queue_name(queue_name, project)
         collection = self._collection(queue_name, project)
 
-        collection.update({'p_q': scope, 'c.id': cid},
+        collection.update({PROJ_QUEUE: scope, 'c.id': cid},
                           {'$set': {'c': {'id': None, 'e': now}}},
                           upsert=False, multi=True)
 
@@ -387,7 +393,7 @@ class MessageController(storage.MessageBase):
         try:
             message = next(cursor)
         except StopIteration:
-            raise exceptions.QueueIsEmpty(queue_name, project)
+            raise errors.QueueIsEmpty(queue_name, project)
 
         return message
 
@@ -395,22 +401,22 @@ class MessageController(storage.MessageBase):
     def get(self, queue_name, message_id, project=None):
         mid = utils.to_oid(message_id)
         if mid is None:
-            raise exceptions.MessageDoesNotExist(message_id, queue_name,
-                                                 project)
+            raise errors.MessageDoesNotExist(message_id, queue_name,
+                                             project)
 
         now = timeutils.utcnow_ts()
 
         query = {
             '_id': mid,
-            'p_q': utils.scope_queue_name(queue_name, project),
+            PROJ_QUEUE: utils.scope_queue_name(queue_name, project),
         }
 
         collection = self._collection(queue_name, project)
         message = list(collection.find(query).limit(1).hint(ID_INDEX_FIELDS))
 
         if not message:
-            raise exceptions.MessageDoesNotExist(message_id, queue_name,
-                                                 project)
+            raise errors.MessageDoesNotExist(message_id, queue_name,
+                                             project)
 
         return _basic_message(message[0], now)
 
@@ -425,7 +431,7 @@ class MessageController(storage.MessageBase):
         # Base query, always check expire time
         query = {
             '_id': {'$in': message_ids},
-            'p_q': utils.scope_queue_name(queue_name, project),
+            PROJ_QUEUE: utils.scope_queue_name(queue_name, project),
         }
 
         collection = self._collection(queue_name, project)
@@ -442,7 +448,7 @@ class MessageController(storage.MessageBase):
     @utils.raises_conn_error
     def post(self, queue_name, messages, client_uuid, project=None):
         if not self._queue_ctrl.exists(queue_name, project):
-            raise exceptions.QueueDoesNotExist(queue_name, project)
+            raise errors.QueueDoesNotExist(queue_name, project)
 
         now = timeutils.utcnow_ts()
         now_dt = datetime.datetime.utcfromtimestamp(now)
@@ -454,7 +460,7 @@ class MessageController(storage.MessageBase):
         prepared_messages = [
             {
                 't': message['ttl'],
-                'p_q': utils.scope_queue_name(queue_name, project),
+                PROJ_QUEUE: utils.scope_queue_name(queue_name, project),
                 'e': now_dt + datetime.timedelta(seconds=message['ttl']),
                 'u': client_uuid,
                 'c': {'id': None, 'e': now},
@@ -602,7 +608,8 @@ class MessageController(storage.MessageBase):
                          project=project))
 
         succeeded_ids = []
-        raise exceptions.MessageConflict(queue_name, project, succeeded_ids)
+        raise errors.MessageConflict(queue_name, project,
+                                     succeeded_ids)
 
     @utils.raises_conn_error
     def delete(self, queue_name, message_id, project=None, claim=None):
@@ -616,7 +623,7 @@ class MessageController(storage.MessageBase):
 
         query = {
             '_id': mid,
-            'p_q': utils.scope_queue_name(queue_name, project),
+            PROJ_QUEUE: utils.scope_queue_name(queue_name, project),
         }
 
         # NOTE(cpp-cabrera): return early - the user gaves us an
@@ -627,9 +634,11 @@ class MessageController(storage.MessageBase):
             return
 
         now = timeutils.utcnow_ts()
-        message = collection.find_one(query)
+        cursor = collection.find(query).hint(ID_INDEX_FIELDS)
 
-        if message is None:
+        try:
+            message = next(cursor)
+        except StopIteration:
             return
 
         is_claimed = (message['c']['id'] is not None and
@@ -637,11 +646,18 @@ class MessageController(storage.MessageBase):
 
         if claim is None:
             if is_claimed:
-                raise exceptions.MessageIsClaimed(message_id)
+                raise errors.MessageIsClaimed(message_id)
 
         else:
             if message['c']['id'] != cid:
-                raise exceptions.MessageIsClaimedBy(message_id, claim)
+                # NOTE(kgriffs): Read from primary in case the message
+                # was just barely claimed, and claim hasn't made it to
+                # the secondary.
+                pref = pymongo.read_preferences.ReadPreference.PRIMARY
+                message = collection.find_one(query, read_preference=pref)
+
+                if message['c']['id'] != cid:
+                    raise errors.MessageIsClaimedBy(message_id, claim)
 
         collection.remove(query['_id'], w=0)
 
@@ -650,7 +666,7 @@ class MessageController(storage.MessageBase):
         message_ids = [mid for mid in map(utils.to_oid, message_ids) if mid]
         query = {
             '_id': {'$in': message_ids},
-            'p_q': utils.scope_queue_name(queue_name, project),
+            PROJ_QUEUE: utils.scope_queue_name(queue_name, project),
         }
 
         collection = self._collection(queue_name, project)

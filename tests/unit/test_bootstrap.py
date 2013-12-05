@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from marconi.common import exceptions
+from marconi.common import errors
 from marconi.queues import bootstrap
 from marconi.queues.storage import pipeline
 from marconi.queues.storage import sharding
@@ -29,25 +29,25 @@ class TestBootstrap(base.TestBase):
         return bootstrap.Bootstrap(self.conf)
 
     def test_storage_invalid(self):
-        boot = self._bootstrap('etc/drivers_storage_invalid.conf')
-        self.assertRaises(exceptions.InvalidDriver,
-                          lambda: boot.storage)
+        bootstrap = self._bootstrap('drivers_storage_invalid.conf')
+        self.assertRaises(errors.InvalidDriver,
+                          lambda: bootstrap.storage)
 
     def test_storage_sqlite(self):
-        bootstrap = self._bootstrap('etc/wsgi_sqlite.conf')
+        bootstrap = self._bootstrap('wsgi_sqlite.conf')
         self.assertIsInstance(bootstrap.storage, pipeline.DataDriver)
         self.assertIsInstance(bootstrap.storage._storage, sqlite.DataDriver)
 
     def test_storage_sqlite_sharded(self):
         """Makes sure we can load the shard driver."""
-        bootstrap = self._bootstrap('etc/wsgi_sqlite_sharded.conf')
+        bootstrap = self._bootstrap('wsgi_sqlite_sharded.conf')
         self.assertIsInstance(bootstrap.storage._storage, sharding.DataDriver)
 
     def test_transport_invalid(self):
-        boot = self._bootstrap('etc/drivers_transport_invalid.conf')
-        self.assertRaises(exceptions.InvalidDriver,
-                          lambda: boot.transport)
+        bootstrap = self._bootstrap('drivers_transport_invalid.conf')
+        self.assertRaises(errors.InvalidDriver,
+                          lambda: bootstrap.transport)
 
     def test_transport_wsgi(self):
-        bootstrap = self._bootstrap('etc/wsgi_sqlite.conf')
+        bootstrap = self._bootstrap('wsgi_sqlite.conf')
         self.assertIsInstance(bootstrap.transport, wsgi.Driver)

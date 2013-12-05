@@ -18,7 +18,7 @@ from stevedore import driver
 
 from marconi.common.cache import cache as oslo_cache
 from marconi.common import decorators
-from marconi.common import exceptions
+from marconi.common import errors
 from marconi.openstack.common import log
 from marconi.queues.storage import pipeline
 from marconi.queues.storage import sharding
@@ -29,7 +29,10 @@ LOG = log.getLogger(__name__)
 
 _GENERAL_OPTIONS = [
     cfg.BoolOpt('sharding', default=False,
-                help='Enable sharding across multiple storage backends'),
+                help=('Enable sharding across multiple storage backends. ',
+                      'If sharding is enabled, the storage driver ',
+                      'configuration is used to determine where the ',
+                      'catalogue/control plane data is kept.')),
     cfg.BoolOpt('admin_mode', default=False,
                 help='Activate endpoints to manage shard registry.'),
 ]
@@ -41,7 +44,7 @@ _DRIVER_OPTIONS = [
                help='Storage driver to use'),
 ]
 
-_DRIVER_GROUP = 'queues:drivers'
+_DRIVER_GROUP = 'drivers'
 
 
 class Bootstrap(object):
@@ -67,39 +70,46 @@ class Bootstrap(object):
 
         if self.conf.sharding:
             LOG.debug(_(u'Storage sharding enabled'))
-            storage_driver = sharding.DataDriver(self.conf)
+            storage_driver = sharding.DataDriver(self.conf, self.cache,
+                                                 self.control)
         else:
-            storage_driver = storage_utils.load_storage_driver(self.conf)
+            storage_driver = storage_utils.load_storage_driver(
+                self.conf, self.cache)
 
         LOG.debug(_(u'Loading storage pipeline'))
         return pipeline.DataDriver(self.conf, storage_driver)
 
     @decorators.lazy_property(write=False)
+    def control(self):
+        LOG.debug(_(u'Loading storage control driver'))
+        return storage_utils.load_storage_driver(self.conf, self.cache,
+                                                 control_mode=True)
+
+    @decorators.lazy_property(write=False)
     def cache(self):
-        LOG.debug(_(u'Loading Proxy Cache Driver'))
+        LOG.debug(_(u'Loading proxy cache driver'))
         try:
             mgr = oslo_cache.get_cache(self.conf)
             return mgr
         except RuntimeError as exc:
             LOG.exception(exc)
-            raise exceptions.InvalidDriver(exc)
+            raise errors.InvalidDriver(exc)
 
     @decorators.lazy_property(write=False)
     def transport(self):
         transport_name = self.driver_conf.transport
         LOG.debug(_(u'Loading transport driver: %s'), transport_name)
 
+        args = [self.conf, self.storage, self.cache, self.control]
         try:
             mgr = driver.DriverManager(self._transport_type,
                                        transport_name,
                                        invoke_on_load=True,
-                                       invoke_args=[self.conf,
-                                                    self.storage,
-                                                    self.cache])
+                                       invoke_args=args)
             return mgr.driver
         except RuntimeError as exc:
             LOG.exception(exc)
-            raise exceptions.InvalidDriver(exc)
+            raise errors.InvalidDriver(exc)
 
     def run(self):
         self.transport.listen()

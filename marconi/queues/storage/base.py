@@ -28,11 +28,26 @@ _LIMITS_OPTIONS = [
                help='Default message pagination size')
 ]
 
-_LIMITS_GROUP = 'queues:limits:storage'
+_LIMITS_GROUP = 'limits:storage'
 
 
 @six.add_metaclass(abc.ABCMeta)
-class DataDriverBase(object):
+class DriverBase(object):
+    """Base class for both data and control plane drivers
+
+    :param conf: Configuration containing options for this driver.
+    :type conf: `oslo.config.ConfigOpts`
+    :param cache: Cache instance to use for reducing latency
+        for certain lookups.
+    :type cache: `marconi.common.cache.backends.BaseCache`
+    """
+    def __init__(self, conf, cache):
+        self.conf = conf
+        self.cache = cache
+
+
+@six.add_metaclass(abc.ABCMeta)
+class DataDriverBase(DriverBase):
     """Interface definition for storage drivers.
 
     Data plane storage drivers are responsible for implementing the
@@ -41,19 +56,23 @@ class DataDriverBase(object):
     Connection information and driver-specific options are
     loaded from the config file or the shard catalog.
 
-    :param conf: Driver configuration. Can be any
-        dict-like object containing the expected
-        options. Must at least include 'uri' which
-        provides connection options such as host and
-        port.
-
+    :param conf: Configuration containing options for this driver.
+    :type conf: `oslo.config.ConfigOpts`
+    :param cache: Cache instance to use for reducing latency
+        for certain lookups.
+    :type cache: `marconi.common.cache.backends.BaseCache`
     """
 
-    def __init__(self, conf):
-        self.conf = conf
+    def __init__(self, conf, cache):
+        super(DataDriverBase, self).__init__(conf, cache)
 
         self.conf.register_opts(_LIMITS_OPTIONS, group=_LIMITS_GROUP)
         self.limits_conf = self.conf[_LIMITS_GROUP]
+
+    @abc.abstractmethod
+    def is_alive(self):
+        """Check whether the storage is ready."""
+        raise NotImplementedError
 
     @abc.abstractproperty
     def queue_controller(self):
@@ -72,7 +91,7 @@ class DataDriverBase(object):
 
 
 @six.add_metaclass(abc.ABCMeta)
-class ControlDriverBase(object):
+class ControlDriverBase(DriverBase):
     """Interface definition for control plane storage drivers.
 
     Storage drivers that work at the control plane layer allow one to
@@ -82,10 +101,17 @@ class ControlDriverBase(object):
     Allows access to the shard registry through a catalogue and a
     shard controller.
 
+    :param conf: Configuration containing options for this driver.
+    :type conf: `oslo.config.ConfigOpts`
+    :param cache: Cache instance to use for reducing latency
+        for certain lookups.
+    :type cache: `marconi.common.cache.backends.BaseCache`
     """
 
-    def __init__(self, conf):
-        self.conf = conf
+    @abc.abstractproperty
+    def catalogue_controller(self):
+        """Returns the driver's catalogue controller."""
+        raise NotImplementedError
 
     @abc.abstractproperty
     def shards_controller(self):
@@ -116,8 +142,8 @@ class QueueBase(ControllerBase):
     """
 
     @abc.abstractmethod
-    def list(self, project=None, marker=None, limit=10,
-             detailed=False, include_claimed=True):
+    def list(self, project=None, marker=None,
+             limit=None, detailed=False):
         """Base method for listing queues.
 
         :param project: Project id
@@ -125,7 +151,6 @@ class QueueBase(ControllerBase):
         :param limit: (Default 10, configurable) Max number
             queues to return.
         :param detailed: Whether metadata is included
-        :param include_claimed: Whether to list claimed messages
 
         :returns: An iterator giving a sequence of queues
             and the marker of the next page.
@@ -204,7 +229,8 @@ class MessageBase(ControllerBase):
 
     @abc.abstractmethod
     def list(self, queue, project=None, marker=None,
-             limit=10, echo=False, client_uuid=None):
+             limit=None, echo=False, client_uuid=None,
+             include_claimed=False):
         """Base method for listing messages.
 
         :param queue: Name of the queue to get the
@@ -213,9 +239,12 @@ class MessageBase(ControllerBase):
         :param marker: Tail identifier
         :param limit: (Default 10, configurable) Max number
             messages to return.
+        :type limit: Maybe int
         :param echo: (Default False) Boolean expressing whether
             or not this client should receive its own messages.
         :param client_uuid: A UUID object. Required when echo=False.
+        :param include_claimed: omit claimed messages from listing?
+        :type include_claimed: bool
 
         :returns: An iterator giving a sequence of messages and
             the marker of the next page.
@@ -328,7 +357,7 @@ class ClaimBase(ControllerBase):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def create(self, queue, metadata, project=None, limit=10):
+    def create(self, queue, metadata, project=None, limit=None):
         """Base method for creating a claim.
 
         :param queue: Name of the queue this
@@ -368,19 +397,8 @@ class ClaimBase(ControllerBase):
         raise NotImplementedError
 
 
-class AdminControllerBase(object):
-    """Top-level class for controllers.
-
-    :param driver: Instance of the driver
-        instantiating this controller.
-    """
-
-    def __init__(self, driver):
-        self.driver = driver
-
-
 @six.add_metaclass(abc.ABCMeta)
-class ShardsBase(AdminControllerBase):
+class ShardsBase(ControllerBase):
     """A controller for managing shards."""
 
     @abc.abstractmethod
@@ -464,4 +482,95 @@ class ShardsBase(AdminControllerBase):
     @abc.abstractmethod
     def drop_all(self):
         """Deletes all shards from storage."""
+        raise NotImplementedError
+
+
+@six.add_metaclass(abc.ABCMeta)
+class CatalogueBase(ControllerBase):
+    """A controller for managing the catalogue. The catalogue is
+    responsible for maintaining a mapping between project.queue
+    entries to their shard.
+    """
+
+    @abc.abstractmethod
+    def list(self, project):
+        """Returns a list of queue entries from the catalogue associated with
+        this project.
+
+        :param project: The project to use when filtering through queue
+                        entries.
+        :type project: six.text_type
+        :returns: [{'project': ..., 'queue': ..., 'shard': ...},]
+        :rtype: [dict]
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def get(self, project, queue):
+        """Returns the shard identifier for the queue registered under this
+        project.
+
+        :param project: Namespace to search for the given queue
+        :type project: six.text_type
+        :param queue: The name of the queue to search for
+        :type queue: six.text_type
+        :returns: {'shard': ...}
+        :rtype: dict
+        :raises: QueueNotMapped
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def exists(self, project, queue):
+        """Determines whether the given queue exists under project.
+
+        :param project: Namespace to check.
+        :type project: six.text_type
+        :param queue: str - Particular queue to check for
+        :type queue: six.text_type
+        :return: True if the queue exists under this project
+        :rtype: bool
+        """
+
+    @abc.abstractmethod
+    def insert(self, project, queue, shard):
+        """Creates a new catalogue entry, or updates it if it already existed.
+
+        :param project: str - Namespace to insert the given queue into
+        :type project: six.text_type
+        :param queue: str - The name of the queue to insert
+        :type queue: six.text_type
+        :param shard: shard identifier to associate this queue with
+        :type shard: six.text_type
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def delete(self, project, queue):
+        """Removes this entry from the catalogue.
+
+        :param project: The namespace to search for this queue
+        :type project: six.text_type
+        :param queue: The queue name to remove
+        :type queue: six.text_type
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def update(self, project, queue, shards=None):
+        """Updates the shard identifier for this queue
+
+        :param project: Namespace to search
+        :type project: six.text_type
+        :param queue: The name of the queue
+        :type queue: six.text_type
+        :param shards: The name of the shard where this project/queue lives.
+        :type shards: six.text_type
+        :raises: QueueNotMapped
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def drop_all(self):
+        """Drops all catalogue entries from storage."""
         raise NotImplementedError

@@ -27,7 +27,7 @@ from marconi import tests as testing
 @ddt.ddt
 class QueueLifecycleBaseTest(base.TestBase):
 
-    config_filename = None
+    config_file = None
 
     def setUp(self):
         super(QueueLifecycleBaseTest, self).setUp()
@@ -110,6 +110,16 @@ class QueueLifecycleBaseTest(base.TestBase):
 
         self.simulate_put('/v1/queues/_' + 'niceboat' * 8)
         self.assertEqual(self.srmock.status, falcon.HTTP_400)
+
+    def test_project_id_restriction(self):
+        self.simulate_put('/v1/queues/Muv-Luv',
+                          headers={'X-Project-ID': 'JAM Project' * 24})
+        self.assertEqual(self.srmock.status, falcon.HTTP_400)
+
+        # no charset restrictions
+        self.simulate_put('/v1/queues/Muv-Luv',
+                          headers={'X-Project-ID': 'JAM Project'})
+        self.assertEqual(self.srmock.status, falcon.HTTP_201)
 
     @ddt.data((u'/v1/queues/non-ascii-n\u0153me', 'utf-8'),
               (u'/v1/queues/non-ascii-n\xc4me', 'iso8859-1'))
@@ -305,11 +315,11 @@ class QueueLifecycleBaseTest(base.TestBase):
         self.assertEqual(self.srmock.status, falcon.HTTP_204)
 
 
+@testing.requires_mongodb
 class QueueLifecycleMongoDBTests(QueueLifecycleBaseTest):
 
-    config_filename = 'wsgi_mongodb.conf'
+    config_file = 'wsgi_mongodb.conf'
 
-    @testing.requires_mongodb
     def setUp(self):
         super(QueueLifecycleMongoDBTests, self).setUp()
 
@@ -327,12 +337,12 @@ class QueueLifecycleMongoDBTests(QueueLifecycleBaseTest):
 
 class QueueLifecycleSQLiteTests(QueueLifecycleBaseTest):
 
-    config_filename = 'wsgi_sqlite.conf'
+    config_file = 'wsgi_sqlite.conf'
 
 
 class QueueFaultyDriverTests(base.TestBaseFaulty):
 
-    config_filename = 'wsgi_faulty.conf'
+    config_file = 'wsgi_faulty.conf'
 
     def test_simple(self):
         path = '/v1/queues/gumshoe'

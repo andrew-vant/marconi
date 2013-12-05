@@ -24,8 +24,10 @@ Schema:
   'o': options :: dict
 """
 
+import functools
+
 from marconi.common import utils as common_utils
-from marconi.queues.storage import base, exceptions
+from marconi.queues.storage import base, errors
 from marconi.queues.storage.mongodb import utils
 
 SHARDS_INDEX = [
@@ -34,11 +36,11 @@ SHARDS_INDEX = [
 
 # NOTE(cpp-cabrera): used for get/list operations. There's no need to
 # show the marker or the _id - they're implementation details.
-OMIT_FIELDS = (('_id', 0),)
+OMIT_FIELDS = (('_id', False),)
 
 
 def _field_spec(detailed=False):
-    return dict(OMIT_FIELDS + (() if detailed else (('o', 0),)))
+    return dict(OMIT_FIELDS + (() if detailed else (('o', False),)))
 
 
 class ShardsController(base.ShardsBase):
@@ -58,16 +60,19 @@ class ShardsController(base.ShardsBase):
         if marker is not None:
             query['n'] = {'$gt': marker}
 
-        return self._col.find(query, fields=_field_spec(detailed),
-                              limit=limit)
+        cursor = self._col.find(query, fields=_field_spec(detailed),
+                                limit=limit)
+        normalizer = functools.partial(_normalize, detailed=detailed)
+        return utils.HookedCursor(cursor, normalizer)
 
     @utils.raises_conn_error
     def get(self, name, detailed=False):
         res = self._col.find_one({'n': name},
                                  _field_spec(detailed))
         if not res:
-            raise exceptions.ShardDoesNotExist(name)
-        return res
+            raise errors.ShardDoesNotExist(name)
+
+        return _normalize(res, detailed)
 
     @utils.raises_conn_error
     def create(self, name, weight, uri, options=None):
@@ -92,7 +97,7 @@ class ShardsController(base.ShardsBase):
                                {'$set': fields},
                                upsert=False)
         if not res['updatedExisting']:
-            raise exceptions.ShardDoesNotExist(name)
+            raise errors.ShardDoesNotExist(name)
 
     @utils.raises_conn_error
     def delete(self, name):
@@ -102,3 +107,15 @@ class ShardsController(base.ShardsBase):
     def drop_all(self):
         self._col.drop()
         self._col.ensure_index(SHARDS_INDEX, unique=True)
+
+
+def _normalize(shard, detailed=False):
+    ret = {
+        'name': shard['n'],
+        'uri': shard['u'],
+        'weight': shard['w'],
+    }
+    if detailed:
+        ret['options'] = shard['o']
+
+    return ret

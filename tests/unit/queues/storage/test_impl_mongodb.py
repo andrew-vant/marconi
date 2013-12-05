@@ -14,20 +14,31 @@
 # limitations under the License.
 
 import time
+import uuid
 
 import mock
 from pymongo import cursor
 import pymongo.errors
 from testtools import matchers
 
+from marconi.common.cache import cache as oslo_cache
 from marconi.openstack.common import timeutils
 from marconi.queues import storage
-from marconi.queues.storage import exceptions
+from marconi.queues.storage import errors
 from marconi.queues.storage import mongodb
 from marconi.queues.storage.mongodb import controllers
+from marconi.queues.storage.mongodb import options
 from marconi.queues.storage.mongodb import utils
 from marconi import tests as testing
 from marconi.tests.queues.storage import base
+
+
+def _cleanup_databases(controller):
+    databases = (controller.driver.message_databases +
+                 [controller.driver.queues_database])
+
+    for db in databases:
+        controller.driver.connection.drop_database(db)
 
 
 class MongodbUtilsTest(testing.TestBase):
@@ -76,14 +87,18 @@ class MongodbUtilsTest(testing.TestBase):
 @testing.requires_mongodb
 class MongodbDriverTest(testing.TestBase):
 
-    def setUp(self):
-        super(MongodbDriverTest, self).setUp()
-        self._conf = self.load_conf('wsgi_mongodb.conf')
+    config_file = 'wsgi_mongodb.conf'
+
+    def _purge_databases(self):
+        _cleanup_databases(self)
 
     def test_db_instance(self):
-        driver = mongodb.DataDriver(self._conf)
+        cache = oslo_cache.get_cache(self.conf)
+        driver = mongodb.DataDriver(self.conf, cache)
 
-        databases = driver.message_databases + [driver.queues_database]
+        databases = (driver.message_databases +
+                     [driver.queues_database])
+
         for db in databases:
             self.assertThat(db.name, matchers.StartsWith(
                 driver.mongodb_conf.database))
@@ -93,19 +108,15 @@ class MongodbDriverTest(testing.TestBase):
 class MongodbQueueTests(base.QueueControllerTest):
 
     driver_class = mongodb.DataDriver
+    config_file = 'wsgi_mongodb.conf'
     controller_class = controllers.QueueController
 
-    def setUp(self):
-        super(MongodbQueueTests, self).setUp()
-        self.load_conf('wsgi_mongodb.conf')
+    def _purge_databases(self):
+        _cleanup_databases(self)
 
-    def tearDown(self):
-        self.controller._collection.drop()
-
-        for collection in self.message_controller._collections:
-            collection.drop()
-
-        super(MongodbQueueTests, self).tearDown()
+    def _prepare_conf(self):
+        self.config(options.MONGODB_GROUP,
+                    database=uuid.uuid4().hex)
 
     def test_indexes(self):
         collection = self.controller._collection
@@ -129,28 +140,26 @@ class MongodbQueueTests(base.QueueControllerTest):
             method.side_effect = error
 
             queues = next(self.controller.list())
-            self.assertRaises(storage.exceptions.ConnectionError, queues.next)
+            self.assertRaises(storage.errors.ConnectionError,
+                              queues.next)
 
 
 @testing.requires_mongodb
 class MongodbMessageTests(base.MessageControllerTest):
 
     driver_class = mongodb.DataDriver
+    config_file = 'wsgi_mongodb.conf'
     controller_class = controllers.MessageController
 
     # NOTE(kgriffs): MongoDB's TTL scavenger only runs once a minute
     gc_interval = 60
 
-    def setUp(self):
-        super(MongodbMessageTests, self).setUp()
-        self.load_conf('wsgi_mongodb.conf')
+    def _purge_databases(self):
+        _cleanup_databases(self)
 
-    def tearDown(self):
-        self.queue_controller._collection.drop()
-        for collection in self.controller._collections:
-            collection.drop()
-
-        super(MongodbMessageTests, self).tearDown()
+    def _prepare_conf(self):
+        self.config(options.MONGODB_GROUP,
+                    database=uuid.uuid4().hex)
 
     def test_indexes(self):
         for collection in self.controller._collections:
@@ -257,7 +266,7 @@ class MongodbMessageTests(base.MessageControllerTest):
             if testing.RUN_SLOW_TESTS:
                 method.return_value = None
 
-                with testing.expect(exceptions.MessageConflict):
+                with testing.expect(errors.MessageConflict):
                     self.controller.post(queue_name, messages, uuid)
 
         created = list(self.controller.post(queue_name,
@@ -281,7 +290,7 @@ class MongodbMessageTests(base.MessageControllerTest):
         queue_name = 'empty-queue-test'
         self.queue_controller.create(queue_name)
 
-        self.assertRaises(storage.exceptions.QueueIsEmpty,
+        self.assertRaises(storage.errors.QueueIsEmpty,
                           self.controller.first, queue_name)
 
     def test_invalid_sort_option(self):
@@ -294,19 +303,17 @@ class MongodbMessageTests(base.MessageControllerTest):
 
 @testing.requires_mongodb
 class MongodbClaimTests(base.ClaimControllerTest):
+
     driver_class = mongodb.DataDriver
+    config_file = 'wsgi_mongodb.conf'
     controller_class = controllers.ClaimController
 
-    def setUp(self):
-        super(MongodbClaimTests, self).setUp()
-        self.load_conf('wsgi_mongodb.conf')
+    def _purge_databases(self):
+        _cleanup_databases(self)
 
-    def tearDown(self):
-        for collection in self.message_controller._collections:
-            collection.drop()
-
-        self.queue_controller._collection.drop()
-        super(MongodbClaimTests, self).tearDown()
+    def _prepare_conf(self):
+        self.config(options.MONGODB_GROUP,
+                    database=uuid.uuid4().hex)
 
     def test_claim_doesnt_exist(self):
         """Verifies that operations fail on expired/missing claims.
@@ -315,7 +322,7 @@ class MongodbClaimTests(base.ClaimControllerTest):
         exists and/or has expired.
         """
         epoch = '000000000000000000000000'
-        self.assertRaises(storage.exceptions.ClaimDoesNotExist,
+        self.assertRaises(storage.errors.ClaimDoesNotExist,
                           self.controller.get, self.queue_name,
                           epoch, project=self.project)
 
@@ -325,11 +332,11 @@ class MongodbClaimTests(base.ClaimControllerTest):
 
         # Lets let it expire
         time.sleep(1)
-        self.assertRaises(storage.exceptions.ClaimDoesNotExist,
+        self.assertRaises(storage.errors.ClaimDoesNotExist,
                           self.controller.update, self.queue_name,
                           claim_id, {}, project=self.project)
 
-        self.assertRaises(storage.exceptions.ClaimDoesNotExist,
+        self.assertRaises(storage.errors.ClaimDoesNotExist,
                           self.controller.update, self.queue_name,
                           claim_id, {}, project=self.project)
 
@@ -345,3 +352,17 @@ class MongodbShardsTests(base.ShardsControllerTest):
 
     def tearDown(self):
         super(MongodbShardsTests, self).tearDown()
+
+
+@testing.requires_mongodb
+class MongodbCatalogueTests(base.CatalogueControllerTest):
+    driver_class = mongodb.ControlDriver
+    controller_class = controllers.CatalogueController
+
+    def setUp(self):
+        super(MongodbCatalogueTests, self).setUp()
+        self.load_conf('wsgi_mongodb.conf')
+
+    def tearDown(self):
+        self.controller.drop_all()
+        super(MongodbCatalogueTests, self).tearDown()

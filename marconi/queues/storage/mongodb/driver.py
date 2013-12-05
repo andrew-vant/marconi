@@ -29,7 +29,6 @@ LOG = logging.getLogger(__name__)
 
 
 def _connection(conf):
-    """MongoDB client connection instance."""
     if conf.uri and 'replicaSet' in conf.uri:
         MongoClient = pymongo.MongoReplicaSetClient
     else:
@@ -40,19 +39,36 @@ def _connection(conf):
 
 class DataDriver(storage.DataDriverBase):
 
-    def __init__(self, conf):
-        super(DataDriver, self).__init__(conf)
+    def __init__(self, conf, cache):
+        super(DataDriver, self).__init__(conf, cache)
 
-        self.conf.register_opts(options.MONGODB_OPTIONS,
+        opts = options.MONGODB_OPTIONS
+
+        # NOTE(cpp-cabrera): if this data driver is being loaded
+        # dynamically, as would be the case for a sharded context,
+        # filter out the options that were given by the shard
+        # catalogue to avoid DuplicateOptErrors.
+        if 'dynamic' in conf:
+            names = conf[options.MONGODB_GROUP].keys()
+            opts = filter(lambda x: x.name not in names, opts)
+
+        self.conf.register_opts(opts,
                                 group=options.MONGODB_GROUP)
-
         self.mongodb_conf = self.conf[options.MONGODB_GROUP]
+
+    def is_alive(self):
+        try:
+            # NOTE(zyuan): Requires admin access to mongodb
+            return 'ok' in self.connection.admin.command('ping')
+
+        except pymongo.errors.PyMongoError:
+            return False
 
     @decorators.lazy_property(write=False)
     def queues_database(self):
         """Database dedicated to the "queues" collection.
 
-        The queues collection is separated out into it's own database
+        The queues collection is separated out into its own database
         to avoid writer lock contention with the messages collections.
         """
 
@@ -78,6 +94,7 @@ class DataDriver(storage.DataDriverBase):
 
     @decorators.lazy_property(write=False)
     def connection(self):
+        """MongoDB client connection instance."""
         return _connection(self.mongodb_conf)
 
     @decorators.lazy_property(write=False)
@@ -95,8 +112,8 @@ class DataDriver(storage.DataDriverBase):
 
 class ControlDriver(storage.ControlDriverBase):
 
-    def __init__(self, conf):
-        super(ControlDriver, self).__init__(conf)
+    def __init__(self, conf, cache):
+        super(ControlDriver, self).__init__(conf, cache)
 
         self.conf.register_opts(options.MONGODB_OPTIONS,
                                 group=options.MONGODB_GROUP)
@@ -116,3 +133,18 @@ class ControlDriver(storage.ControlDriverBase):
     @property
     def shards_controller(self):
         return controllers.ShardsController(self)
+
+    @decorators.lazy_property(write=False)
+    def catalogue_database(self):
+        """Database dedicated to the "queues" collection.
+
+        The queues collection is separated out into its own database
+        to avoid writer lock contention with the messages collections.
+        """
+
+        name = self.mongodb_conf.database + '_catalogue'
+        return self.connection[name]
+
+    @property
+    def catalogue_controller(self):
+        return controllers.CatalogueController(self)
