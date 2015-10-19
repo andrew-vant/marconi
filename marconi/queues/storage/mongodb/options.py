@@ -16,7 +16,7 @@
 
 """MongoDB storage driver configuration options."""
 
-from oslo.config import cfg
+from oslo_config import cfg
 
 
 MONGODB_OPTIONS = [

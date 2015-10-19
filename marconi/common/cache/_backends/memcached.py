@@ -15,7 +15,7 @@
 import time
 
 import memcache
-from oslo.config import cfg
+from oslo_config import cfg
 
 from marconi.common.cache import backends
 

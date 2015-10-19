@@ -15,7 +15,7 @@
 
 """Test Auth."""
 
-from oslo.config import cfg
+from oslo_config import cfg
 
 from marconi.queues.transport import auth
 from marconi import tests as testing

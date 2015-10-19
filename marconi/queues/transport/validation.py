@@ -16,7 +16,7 @@
 import json
 import re
 
-from oslo.config import cfg
+from oslo_config import cfg
 
 
 _TRANSPORT_LIMITS_OPTIONS = [
