@@ -18,7 +18,7 @@
 import abc
 import six
 
-from oslo.config import cfg
+from oslo_config import cfg
 
 _LIMITS_OPTIONS = [
     cfg.IntOpt('default_queue_paging', default=10,
@@ -36,7 +36,7 @@ class DriverBase(object):
     """Base class for both data and control plane drivers
 
     :param conf: Configuration containing options for this driver.
-    :type conf: `oslo.config.ConfigOpts`
+    :type conf: `oslo_config.ConfigOpts`
     :param cache: Cache instance to use for reducing latency
         for certain lookups.
     :type cache: `marconi.common.cache.backends.BaseCache`
@@ -57,7 +57,7 @@ class DataDriverBase(DriverBase):
     loaded from the config file or the shard catalog.
 
     :param conf: Configuration containing options for this driver.
-    :type conf: `oslo.config.ConfigOpts`
+    :type conf: `oslo_config.ConfigOpts`
     :param cache: Cache instance to use for reducing latency
         for certain lookups.
     :type cache: `marconi.common.cache.backends.BaseCache`
@@ -102,7 +102,7 @@ class ControlDriverBase(DriverBase):
     shard controller.
 
     :param conf: Configuration containing options for this driver.
-    :type conf: `oslo.config.ConfigOpts`
+    :type conf: `oslo_config.ConfigOpts`
     :param cache: Cache instance to use for reducing latency
         for certain lookups.
     :type cache: `marconi.common.cache.backends.BaseCache`

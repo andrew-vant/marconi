@@ -16,7 +16,7 @@
 
 import uuid
 
-from oslo.config import cfg
+from oslo_config import cfg
 
 from marconi.common.cache import cache as oslo_cache
 from marconi.queues.storage import sharding

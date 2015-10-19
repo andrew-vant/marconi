@@ -18,7 +18,7 @@ import sqlite3
 import uuid
 
 import msgpack
-from oslo.config import cfg
+from oslo_config import cfg
 
 from marconi.common import decorators
 from marconi.queues import storage

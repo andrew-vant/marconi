@@ -17,7 +17,7 @@
 import heapq
 import itertools
 
-from oslo.config import cfg
+from oslo_config import cfg
 import six
 
 from marconi.common import decorators

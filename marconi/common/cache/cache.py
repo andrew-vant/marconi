@@ -19,7 +19,7 @@ Supported configuration options:
 `cache_backend`: Name of the cache backend to use.
 """
 
-from oslo.config import cfg
+from oslo_config import cfg
 from stevedore import driver
 
 
@@ -42,7 +42,7 @@ def get_cache(conf):
     :param conf: Configuration instance to use
     """
 
-    # NOTE(flaper87): oslo.config checks if options
+    # NOTE(flaper87): oslo_config checks if options
     # exist before registering them. The code bellow
     # should be safe.
     cache_group = cfg.OptGroup(name='oslo_cache',

@@ -18,7 +18,7 @@ import functools
 from wsgiref import simple_server
 
 import falcon
-from oslo.config import cfg
+from oslo_config import cfg
 import six
 
 from marconi.common import decorators
